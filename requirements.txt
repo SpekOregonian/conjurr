@@ -28,8 +28,8 @@ google-generativeai>=0.7.0
 # File upload security (part of Flask ecosystem)
 Werkzeug>=2.3,<4
 
-# Optional: production WSGI server (uncomment if deploying behind Gunicorn)
-# gunicorn>=21.2
+# Production WSGI server (used by the Docker image's CMD)
+gunicorn>=21.2,<23
 
 # Optional: typing backports / forward compatibility (safe no-op if stdlib covers)
 typing-extensions>=4.9

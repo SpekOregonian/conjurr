@@ -4,7 +4,7 @@ Programmatic access to AI-driven recommendations. Architecture relies on:
 - Tautulli: watch history & user list
 - TMDb: metadata, posters, runtime, rating, genres (multi-pass search for robust TMDb ID resolution)
 - Overseerr: on-demand availability (presence + plexUrl implies available)
-- **Multi-Provider AI**: Gemini, Mistral, or OpenRouter for candidate generation (20 shows + 20 movies per request)
+- **Multi-Provider AI**: Gemini, Mistral, OpenRouter, or a self-hosted LiteLLM proxy for candidate generation (20 shows + 20 movies per request)
 
 Base URL: `http://<host>:<port>`
 Authentication: None built-in (enforce at reverse proxy)
@@ -21,7 +21,7 @@ Rate limits: None
 - ✅ Custom decade/genre filtering
 - ✅ Multiple output formats (JSON/HTML)
 - ✅ **AI Model Selection** - Choose specific AI models per request
-- ✅ **Multi-Provider Support** - Gemini, Mistral, OpenRouter
+- ✅ **Multi-Provider Support** - Gemini, Mistral, OpenRouter, LiteLLM Proxy
 - ✅ Backward compatibility with existing user_id parameter
 
 ## Query Parameters
@@ -62,6 +62,12 @@ Rate limits: None
 - `openai/gpt-4o-mini` - Fast GPT-4 variant
 - `openai/gpt-4o` - Full GPT-4 quality
 
+#### LiteLLM Proxy
+- Any model name/alias configured on your self-hosted [LiteLLM proxy](https://docs.litellm.ai/docs/proxy/quick_start) (e.g. `gpt-4o`, `claude-3-opus`, `my-local-model`)
+- Requires `LITELLM_BASE_URL` (proxy's base URL, no trailing `/chat/completions`) to be configured in Settings
+- `LITELLM_API_KEY` is optional and only needed if your proxy enforces authentication
+- Requests are sent to `{LITELLM_BASE_URL}/chat/completions` using the OpenAI-compatible chat completions format
+
 **Notes:**
 - Model availability depends on your configured AI provider
 - Free models marked where applicable
@@ -95,6 +101,9 @@ Invoke-RestMethod -Method Get -Uri "http://localhost:2665/recommendations?user=j
 
 # Use GPT-4 via OpenRouter
 Invoke-RestMethod -Method Get -Uri "http://localhost:2665/recommendations?user_id=29170859&model=openai/gpt-4o"
+
+# Use a model configured on your LiteLLM proxy (AI_PROVIDER must be set to litellm)
+Invoke-RestMethod -Method Get -Uri "http://localhost:2665/recommendations?user_id=29170859&model=my-local-model"
 ```
 
 ### Custom Filtering
@@ -210,7 +219,7 @@ Invoke-WebRequest -Method Get -Uri "http://localhost:2665/recommendations?user=j
 - `plex_url`: Direct link to content in Plex (null if unavailable)
 - `overseerr_url`: Link to request/manage item in Overseerr
 - Separate arrays for available (`*_posters`) and unavailable (`*_posters_unavailable`) content
-- `debug.ai_provider`: Current AI provider (gemini/mistral/openrouter)
+- `debug.ai_provider`: Current AI provider (gemini/mistral/openrouter/litellm)
 - `debug.ai_endpoint`: API endpoint URL used for the request
 - `debug.ai_model_selected`: Model requested (or "Auto-selected" if none)
 - `debug.ai_model_used`: Actual model used by the AI provider
@@ -272,7 +281,7 @@ Mobile-optimized HTML suitable for embedding or direct display:
 - Genre filtering (21 supported genres)
 - Mood filtering (7 curated options: Underrated, Surprise Me, Out of my comfort zone, Comfort Food, Award Winners, Popular streaming, Seasonal)
 - **AI Model Selection** - Per-request model override
-- **Multi-Provider AI Support** - Gemini, Mistral, OpenRouter
+- **Multi-Provider AI Support** - Gemini, Mistral, OpenRouter, LiteLLM Proxy
 - JSON and HTML response formats
 - Overseerr availability checking
 - TMDb metadata and posters
@@ -317,12 +326,13 @@ For existing API consumers:
 - Use model selection strategically - higher quality models may have higher latency
 
 ## Security
-Add authentication at reverse proxy level (OAuth, Basic Auth, etc.). API responses contain no sensitive data, but recommendation generation consumes AI API quotas from multiple providers (Google Gemini, Mistral AI, OpenRouter).
+Add authentication at reverse proxy level (OAuth, Basic Auth, etc.). API responses contain no sensitive data, but recommendation generation consumes AI API quotas from multiple providers (Google Gemini, Mistral AI, OpenRouter, or your self-hosted LiteLLM proxy).
 
 **AI Provider Considerations:**
 - **Gemini**: Uses Google AI API quotas
 - **Mistral**: Uses Mistral AI API quotas (free tier available)
 - **OpenRouter**: Uses OpenRouter API quotas (proxies to various providers)
+- **LiteLLM**: Uses whatever backend quotas/keys are configured on your self-hosted proxy; requests go directly to your proxy's `LITELLM_BASE_URL`
 
 Monitor usage via the `debug.ai_usage_today` field to track consumption across providers.
 

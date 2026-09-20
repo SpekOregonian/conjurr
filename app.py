@@ -252,6 +252,8 @@ def get_settings():
         'SELECTED_LIBRARIES': [],
         'MISTRAL_API_KEY': '',
         'OPENROUTER_API_KEY': '',
+        'LITELLM_API_KEY': '',
+        'LITELLM_BASE_URL': '',
         'AI_PROVIDER': 'gemini',
         'AI_MODEL': '',
         'AI_DAILY_QUOTAS': '',
@@ -409,6 +411,9 @@ def reload_settings():
         g.MISTRAL_API_KEY = settings['MISTRAL_API_KEY']
     elif g.AI_PROVIDER == 'openrouter' and settings.get('OPENROUTER_API_KEY'):
         g.OPENROUTER_API_KEY = settings['OPENROUTER_API_KEY']
+    elif g.AI_PROVIDER == 'litellm' and settings.get('LITELLM_BASE_URL'):
+        g.LITELLM_BASE_URL = settings['LITELLM_BASE_URL'].rstrip('/')
+        g.LITELLM_API_KEY = settings.get('LITELLM_API_KEY', '')
     
     # Keep old variables for backward compatibility
     g.GOOGLE_API_KEY = settings.get('GOOGLE_API_KEY', '')
@@ -776,12 +781,14 @@ def get_cached_users():
 def get_user_watch_history_api(user_id, selected_libraries=None):
     """Always fetch recent (bounded window) history via API for top/recent calculations."""
     one_year_ago = int(time.time()) - 365*24*60*60
+    # Tautulli's get_history API expects 'after' as a date string (YYYY-MM-DD), not a Unix timestamp.
+    one_year_ago_str = datetime.fromtimestamp(one_year_ago).strftime('%Y-%m-%d')
     params = {
         'apikey': g.TAUTULLI_API_KEY,
         'cmd': 'get_history',
         'user_id': user_id,
         'length': 1000,
-        'after': one_year_ago
+        'after': one_year_ago_str
     }
     try:
         resp = requests.get(f"{g.TAUTULLI_URL}/api/v2", params=params, timeout=5)
@@ -1546,6 +1553,8 @@ def recommend_for_user(user_id, mode='history', decade_code=None, genre_code=Non
                 display_model = 'mistral-small'
             elif g.AI_PROVIDER == 'openrouter':
                 display_model = 'anthropic/claude-3-haiku'
+            elif g.AI_PROVIDER == 'litellm':
+                display_model = 'default'
             else:
                 display_model = 'none'
         
@@ -1577,6 +1586,8 @@ def recommend_for_user(user_id, mode='history', decade_code=None, genre_code=Non
                 display_model = 'mistral-small'
             elif g.AI_PROVIDER == 'openrouter':
                 display_model = 'anthropic/claude-3-haiku'
+            elif g.AI_PROVIDER == 'litellm':
+                display_model = 'default'
             else:
                 display_model = 'none'
         
@@ -2144,7 +2155,72 @@ def recommend_for_user(user_id, mode='history', decade_code=None, genre_code=Non
                 
             except Exception as e:
                 gemini_recs['error'] = f"OpenRouter request failed: {e}"
-                
+
+        elif g.AI_PROVIDER == 'litellm':
+            # LiteLLM proxy implementation (OpenAI-compatible /chat/completions endpoint)
+            litellm_base = (getattr(g, 'LITELLM_BASE_URL', '') or '').rstrip('/')
+            gemini_recs['ai_endpoint'] = f"{litellm_base}/chat/completions" if litellm_base else None
+            try:
+                if not litellm_base:
+                    raise ValueError('LITELLM_BASE_URL is not configured')
+
+                litellm_url = f"{litellm_base}/chat/completions"
+                headers = {"Content-Type": "application/json"}
+                litellm_key = getattr(g, 'LITELLM_API_KEY', '')
+                if litellm_key:
+                    headers["Authorization"] = f"Bearer {litellm_key}"
+
+                # LiteLLM proxies expose whatever model name/alias is configured server-side.
+                model_name = g.AI_MODEL or "gpt-3.5-turbo"
+
+                data = {
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                    "max_tokens": 4000
+                }
+
+                response = requests.post(litellm_url, headers=headers, json=data, timeout=30)
+                response.raise_for_status()
+
+                result = response.json()
+                content = result['choices'][0]['message']['content']
+                gemini_recs['raw_response'] = content
+                gemini_recs['model_used'] = model_name
+
+                # Extract usage information (OpenAI-compatible shape)
+                usage = result.get('usage', {}) or {}
+                gemini_recs['usage'] = {
+                    'prompt_token_count': usage.get('prompt_tokens'),
+                    'candidates_token_count': usage.get('completion_tokens'),
+                    'total_token_count': usage.get('total_tokens')
+                }
+
+                rec_json = extract_json_object(content)
+                gemini_recs['parsed_json'] = rec_json
+                if not rec_json:
+                    raise ValueError('No JSON found in LiteLLM response')
+
+                ai_recommended = pyjson.loads(rec_json)
+                cats = ai_recommended.get('categories', []) or []
+                if cats and isinstance(cats[0], dict):
+                    cats = [c.get('name') or c.get('title') or str(c) for c in cats]
+                ai_recommended['categories'] = [c for c in cats if isinstance(c, str)]
+
+                # Record usage
+                ut = gemini_recs.get('usage') or {}
+                record_usage(
+                    model_name,
+                    ut.get('prompt_token_count'),
+                    ut.get('candidates_token_count'),
+                    ut.get('total_token_count'),
+                )
+                gemini_recs['usage_today'] = get_usage_today(model_name)
+                gemini_recs['available_models'] = [model_name]
+
+            except Exception as e:
+                gemini_recs['error'] = f"LiteLLM proxy request failed: {e}"
+
         else:
             gemini_recs['error'] = f"Unsupported AI provider: {g.AI_PROVIDER}"
     
@@ -3446,23 +3522,28 @@ def index():
         provider_names = {
             'gemini': 'Gemini',
             'mistral': 'Mistral',
-            'openrouter': 'OpenRouter'
+            'openrouter': 'OpenRouter',
+            'litellm': 'LiteLLM'
         }
         provider_name = provider_names.get(ai_provider, ai_provider.title())
         
-        # Check if API key exists for current provider
+        # Check if API key exists for current provider (LiteLLM only requires a base URL)
         api_key_exists = False
+        missing_config_label = 'No API key'
         if ai_provider == 'gemini':
             api_key_exists = bool(getattr(g, 'GOOGLE_API_KEY', ''))
         elif ai_provider == 'mistral':
             api_key_exists = bool(getattr(g, 'MISTRAL_API_KEY', ''))
         elif ai_provider == 'openrouter':
             api_key_exists = bool(getattr(g, 'OPENROUTER_API_KEY', ''))
+        elif ai_provider == 'litellm':
+            api_key_exists = bool(getattr(g, 'LITELLM_BASE_URL', ''))
+            missing_config_label = 'No base URL'
         
         model_display = ai_model if ai_model else 'Auto-selected'
         status_text = f'{provider_name}: {model_display}'
         if not api_key_exists:
-            status_text += ' (No API key)'
+            status_text += f' ({missing_config_label})'
         _add_status(status_text, api_key_exists)
         
         # TMDb Status
@@ -3621,6 +3702,8 @@ def settings_page():
             'GOOGLE_API_KEY': request.form.get('GOOGLE_API_KEY', '').strip(),
             'MISTRAL_API_KEY': request.form.get('MISTRAL_API_KEY', '').strip(),
             'OPENROUTER_API_KEY': request.form.get('OPENROUTER_API_KEY', '').strip(),
+            'LITELLM_API_KEY': request.form.get('LITELLM_API_KEY', '').strip(),
+            'LITELLM_BASE_URL': request.form.get('LITELLM_BASE_URL', '').strip(),
             'TAUTULLI_DB_PATH': request.form.get('TAUTULLI_DB_PATH', '').strip(),
             'AI_PROVIDER': request.form.get('AI_PROVIDER', 'gemini').strip(),
             'AI_MODEL': request.form.get('AI_MODEL', '').strip(),
@@ -3660,6 +3743,13 @@ def settings_page():
             errors.append('Mistral API Key is required when using Mistral provider')
         if not is_nonempty(new_settings['OPENROUTER_API_KEY']) and new_settings['AI_PROVIDER'] == 'openrouter':
             errors.append('OpenRouter API Key is required when using OpenRouter provider')
+        if new_settings['AI_PROVIDER'] == 'litellm':
+            if not is_nonempty(new_settings['LITELLM_BASE_URL']):
+                errors.append('LiteLLM Proxy Base URL is required when using LiteLLM provider')
+            elif not is_valid_url(new_settings['LITELLM_BASE_URL']):
+                errors.append('LiteLLM Proxy Base URL must start with http:// or https://')
+            if not is_nonempty(new_settings['AI_MODEL']):
+                errors.append('LiteLLM Model name is required when using LiteLLM provider (as configured on your proxy)')
         # Tautulli settings are now optional since we use Plex directly
         if new_settings.get('TAUTULLI_URL') and not is_valid_url(new_settings['TAUTULLI_URL']):
             errors.append('Tautulli URL must start with http:// or https://')
@@ -3734,6 +3824,7 @@ def settings_page():
     _feat('Enhanced Watch History (Tautulli API)', bool(settings.get('TAUTULLI_URL') and settings.get('TAUTULLI_API_KEY')), 'Access to user viewing patterns and preferences.')
     _feat('Daily AI Quotas Enforcement', bool(settings.get('AI_DAILY_QUOTAS')), 'Limits model calls per day based on JSON map.')
     _feat('Preferred AI Model Override', bool(settings.get('AI_MODEL')), 'Forces specific model when generating recommendations.')
+    _feat('LiteLLM Proxy', bool(settings.get('AI_PROVIDER') == 'litellm' and settings.get('LITELLM_BASE_URL')), 'Routes AI requests through a self-hosted LiteLLM proxy (OpenAI-compatible).')
     # Removed Library Inclusion Filter & Plex Direct Library Source features
     # Fetch libraries for inclusion UI
     

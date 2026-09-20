@@ -225,11 +225,12 @@
                     <option value="gemini" {% if settings.AI_PROVIDER == 'gemini' or not settings.AI_PROVIDER %}selected{% endif %}>Google Gemini</option>
                     <option value="mistral" {% if settings.AI_PROVIDER == 'mistral' %}selected{% endif %}>Mistral AI</option>
                     <option value="openrouter" {% if settings.AI_PROVIDER == 'openrouter' %}selected{% endif %}>OpenRouter</option>
+                    <option value="litellm" {% if settings.AI_PROVIDER == 'litellm' %}selected{% endif %}>LiteLLM Proxy</option>
                 </select>
                 <div class="hint">Choose your preferred AI provider for generating recommendations.</div>
             </div>
             
-            <div class="field">
+            <div class="field" id="ai-model-select-field" {% if settings.AI_PROVIDER == 'litellm' %}style="display:none;"{% endif %}>
                 <label for="AI_MODEL">AI Model</label>
                 <select id="AI_MODEL" name="AI_MODEL" style="width:100%; padding:12px 14px 11px; background:#141414; color:#ffe89c; border:1px solid #353535; border-radius:8px; font-size:0.95rem; font-family:inherit; transition:all 0.2s ease;">
                     <option value="" {% if not settings.AI_MODEL %}selected{% endif %}>Auto-select (Recommended)</option>
@@ -265,6 +266,12 @@
                 </select>
                 <div class="hint">Choose a specific model or leave as auto-select for optimal performance.</div>
             </div>
+
+            <div class="field" id="litellm-model-field" {% if settings.AI_PROVIDER != 'litellm' %}style="display:none;"{% endif %}>
+                <label for="LITELLM_MODEL_INPUT">LiteLLM Model Name {% if settings.AI_PROVIDER == 'litellm' %}<span class="required">REQ</span>{% endif %}</label>
+                <input type="text" id="LITELLM_MODEL_INPUT" value="{{ settings.AI_MODEL }}" placeholder="e.g. gpt-4o, claude-3-opus, my-local-model">
+                <div class="hint">Enter the model name/alias exactly as configured in your LiteLLM proxy's <code>config.yaml</code>.</div>
+            </div>
             
             <div class="field">
                 <label for="GOOGLE_API_KEY">Google Gemini API Key {% if 'GOOGLE_API_KEY' in missing %}<span class="required">REQ</span>{% endif %}</label>
@@ -282,6 +289,18 @@
                 <label for="OPENROUTER_API_KEY">OpenRouter API Key {% if settings.AI_PROVIDER == 'openrouter' and not settings.OPENROUTER_API_KEY %}<span class="required">REQ</span>{% endif %}</label>
                 <input type="password" id="OPENROUTER_API_KEY" name="OPENROUTER_API_KEY" value="{{ settings.OPENROUTER_API_KEY }}" placeholder="sk-or-v1-...">
                 <div class="hint">Required for OpenRouter. Get from <a href="https://openrouter.ai/keys" target="_blank">OpenRouter</a></div>
+            </div>
+
+            <div class="field">
+                <label for="LITELLM_BASE_URL">LiteLLM Proxy Base URL {% if settings.AI_PROVIDER == 'litellm' and not settings.LITELLM_BASE_URL %}<span class="required">REQ</span>{% endif %}</label>
+                <input type="text" id="LITELLM_BASE_URL" name="LITELLM_BASE_URL" value="{{ settings.LITELLM_BASE_URL }}" placeholder="http://localhost:4000">
+                <div class="hint">Base URL of your self-hosted <a href="https://docs.litellm.ai/docs/proxy/quick_start" target="_blank">LiteLLM proxy</a> (OpenAI-compatible). Do not include <code>/chat/completions</code>.</div>
+            </div>
+
+            <div class="field">
+                <label for="LITELLM_API_KEY">LiteLLM Proxy API Key <span class="inline-badge">Optional</span></label>
+                <input type="password" id="LITELLM_API_KEY" name="LITELLM_API_KEY" value="{{ settings.LITELLM_API_KEY }}" placeholder="Virtual key, if your proxy requires auth">
+                <div class="hint">Only required if your LiteLLM proxy enforces API key authentication.</div>
             </div>
             
             <div class="field" style="grid-column:1 / -1;">
@@ -377,6 +396,7 @@
             secureField('GOOGLE_API_KEY');
             secureField('MISTRAL_API_KEY');
             secureField('OPENROUTER_API_KEY');
+            secureField('LITELLM_API_KEY');
             
             // Handle AI provider and model selection
             const providerSelect = document.getElementById('AI_PROVIDER');
@@ -384,9 +404,13 @@
             const geminiModels = document.getElementById('gemini-models');
             const mistralModels = document.getElementById('mistral-models');
             const openrouterModels = document.getElementById('openrouter-models');
+            const modelSelectField = document.getElementById('ai-model-select-field');
+            const litellmModelField = document.getElementById('litellm-model-field');
+            const litellmModelInput = document.getElementById('LITELLM_MODEL_INPUT');
             
             function updateModelOptions() {
                 const selectedProvider = providerSelect.value;
+                const isLitellm = selectedProvider === 'litellm';
                 
                 // Hide all model groups
                 if (geminiModels) geminiModels.style.display = 'none';
@@ -408,6 +432,18 @@
                     if (selectedOption && selectedOption.parentElement.style.display === 'none') {
                         modelSelect.value = '';
                     }
+                }
+                
+                // Toggle between the fixed model dropdown and the free-text LiteLLM model field.
+                // Only one of them should carry name="AI_MODEL" so the form submits a single value.
+                if (modelSelectField) modelSelectField.style.display = isLitellm ? 'none' : '';
+                if (litellmModelField) litellmModelField.style.display = isLitellm ? '' : 'none';
+                if (isLitellm) {
+                    if (modelSelect) modelSelect.removeAttribute('name');
+                    if (litellmModelInput) litellmModelInput.setAttribute('name', 'AI_MODEL');
+                } else {
+                    if (litellmModelInput) litellmModelInput.removeAttribute('name');
+                    if (modelSelect) modelSelect.setAttribute('name', 'AI_MODEL');
                 }
             }
             

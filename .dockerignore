@@ -1,0 +1,51 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Python cache/artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets & local settings
+.env
+*.env
+settings.ini
+
+# Local databases, caches & uploads
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.pkl
+data/
+
+# IDE / OS cruft
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docs (not required at runtime)
+*.md
+
+# PyInstaller / packaging artifacts
+build/
+dist/
+*.spec
+@package/
+*.rc
+*.rcfd
+
+# Container tooling
+Dockerfile
+.dockerignore
+docker-compose*.yml
