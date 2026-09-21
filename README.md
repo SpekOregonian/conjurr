@@ -36,6 +36,14 @@ Conjurr analyzes Plex watch history via Tautulli, resolves TMDb IDs, and uses Go
 	```
 3. Open `http://localhost:2665` and continue with the `/settings` steps below.
 
+#### Releasing a new version
+Images are tagged from git tags following [semver](https://semver.org/) (`vMAJOR.MINOR.PATCH`). Pushing a version tag builds and publishes `X.Y.Z`, `X.Y`, `X`, and updates `latest`; ordinary pushes to `main` only publish a `main` + short-sha tag (no `latest`), so `latest` always reflects the newest real release.
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+Bump `v1.0.0` → `v1.1.0` (features) or `v1.0.1` (fixes) for subsequent releases; see `.github/workflows/docker-publish.yml` for the full tagging logic.
+
 ### Option B: Run from source
 1. Install dependencies:
 	- Use `requirements.txt` with your Python 3.11+ environment.
